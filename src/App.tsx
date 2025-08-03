@@ -8,6 +8,7 @@ import { AuthProvider } from "./contexts/AuthContext";
 import { ThemeProvider } from './contexts/ThemeContext';
 import { WishlistProvider } from './contexts/WishlistContext';
 import { CartProvider } from './contexts/CartContext';
+import { WebSocketProvider } from './contexts/WebSocketContext';
 import { cleanupLocalStorage } from './utils/localStorageCleanup';
 import ProtectedRoute from './components/ProtectedRoute';
 import Home from "./pages/Home";
@@ -39,57 +40,59 @@ const App = () => {
           <CartProvider>
             <TooltipProvider>
               <AuthProvider>
-                <Toaster />
-                <Sonner />
-                <BrowserRouter>
-                  <Routes>
-                    {/* Public Routes */}
-                    <Route path="/" element={<Home />} />
-                    <Route path="/event/:id" element={<EventDetails />} />
-                    <Route path="/login" element={<Login />} />
-                    <Route path="/register" element={<Register />} />
-                    <Route path="/shop" element={<Shop />} />
-                    <Route path="/product/:id" element={<ProductDetail />} />
-                    <Route path="/virtumart" element={<Index />} />
-                    
-                    {/* Protected Routes - Require Authentication */}
-                    <Route path="/booking/:id" element={
-                      <ProtectedRoute>
-                        <BookingForm />
-                      </ProtectedRoute>
-                    } />
-                    <Route path="/my-bookings" element={
-                      <ProtectedRoute>
-                        <Dashboard />
-                      </ProtectedRoute>
-                    } />
-                    <Route path="/profile" element={
-                      <ProtectedRoute>
-                        <Profile />
-                      </ProtectedRoute>
-                    } />
-                    <Route path="/cart" element={
-                      <ProtectedRoute>
-                        <Cart />
-                      </ProtectedRoute>
-                    } />
-                    <Route path="/wishlist" element={
-                      <ProtectedRoute>
-                        <Wishlist />
-                      </ProtectedRoute>
-                    } />
-                    
-                    {/* Admin Only Routes */}
-                    <Route path="/dashboard" element={
-                      <ProtectedRoute requiredRole="admin">
-                        <Dashboard />
-                      </ProtectedRoute>
-                    } />
-                    
-                    {/* 404 Route */}
-                    <Route path="*" element={<NotFound />} />
-                  </Routes>
-                </BrowserRouter>
+                <WebSocketProvider>
+                  <Toaster />
+                  <Sonner />
+                  <BrowserRouter>
+                    <Routes>
+                      {/* Public Routes */}
+                      <Route path="/" element={<Home />} />
+                      <Route path="/event/:id" element={<EventDetails />} />
+                      <Route path="/login" element={<Login />} />
+                      <Route path="/register" element={<Register />} />
+                      <Route path="/shop" element={<Shop />} />
+                      <Route path="/product/:id" element={<ProductDetail />} />
+                      <Route path="/virtumart" element={<Index />} />
+                      
+                      {/* Protected Routes - Require Authentication */}
+                      <Route path="/booking/:id" element={
+                        <ProtectedRoute>
+                          <BookingForm />
+                        </ProtectedRoute>
+                      } />
+                      <Route path="/my-bookings" element={
+                        <ProtectedRoute>
+                          <Dashboard />
+                        </ProtectedRoute>
+                      } />
+                      <Route path="/profile" element={
+                        <ProtectedRoute>
+                          <Profile />
+                        </ProtectedRoute>
+                      } />
+                      <Route path="/cart" element={
+                        <ProtectedRoute>
+                          <Cart />
+                        </ProtectedRoute>
+                      } />
+                      <Route path="/wishlist" element={
+                        <ProtectedRoute>
+                          <Wishlist />
+                        </ProtectedRoute>
+                      } />
+                      
+                      {/* Admin Only Routes */}
+                      <Route path="/dashboard" element={
+                        <ProtectedRoute requiredRole="admin">
+                          <Dashboard />
+                        </ProtectedRoute>
+                      } />
+                      
+                      {/* 404 Route */}
+                      <Route path="*" element={<NotFound />} />
+                    </Routes>
+                  </BrowserRouter>
+                </WebSocketProvider>
               </AuthProvider>
             </TooltipProvider>
           </CartProvider>

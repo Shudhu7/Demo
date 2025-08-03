@@ -1,4 +1,4 @@
-// src/pages/Dashboard.tsx
+// src/pages/Dashboard.tsx - With WebSocket Integration
 import React, { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -16,6 +16,7 @@ import Events from '@/components/dashboard/Events';
 import Users from '@/components/dashboard/Users';
 
 import { useAuth } from '@/contexts/AuthContext';
+import { useWebSocketContext } from '@/contexts/WebSocketContext'; // ADD THIS IMPORT
 import { UserBooking } from '@/types/event';
 import {
   Calendar,
@@ -25,58 +26,211 @@ import {
   CheckCircle,
   XCircle,
   AlertCircle,
-  Ticket
+  Ticket,
+  Wifi, // ADD THIS IMPORT
+  Bell // ADD THIS IMPORT
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 const Dashboard: React.FC = () => {
   const { user } = useAuth();
   const { toast } = useToast();
+  const { subscribe, sendMessage, isConnected } = useWebSocketContext(); // ADD THIS
   const location = useLocation();
   const [bookings, setBookings] = useState<UserBooking[]>([]);
   const [activeTab, setActiveTab] = useState('all');
   const [loading, setLoading] = useState(true);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  
+  // ADD WEBSOCKET STATE
+  const [realTimeNotifications, setRealTimeNotifications] = useState<any[]>([]);
+  const [lastUpdateTime, setLastUpdateTime] = useState<Date | null>(null);
 
   // Check if we're on the bookings route or dashboard route
   const isBookingsPage = location.pathname === '/my-bookings';
   const isDashboardPage = location.pathname === '/dashboard';
 
-  // Load user bookings
+  // ADD WEBSOCKET FUNCTIONALITY
   useEffect(() => {
-    const loadBookings = () => {
-      setLoading(true);
-      try {
-        if (user) {
-          const savedBookings = localStorage.getItem(`bookings_${user.id}`);
-          if (savedBookings) {
-            const parsedBookings = JSON.parse(savedBookings);
-            const validBookings = parsedBookings.filter((booking: any) =>
-              booking &&
-              booking.id &&
-              booking.eventTitle &&
-              booking.status
-            );
-            setBookings(validBookings);
-          } else {
-            setBookings([]);
-          }
+    if (!user || !isConnected) return;
+
+    console.log('🔗 Setting up Dashboard WebSocket subscriptions...');
+
+    const subscriptions: (() => void)[] = [];
+
+    // For regular users - booking updates
+    if (user.role !== 'admin') {
+      // Subscribe to user-specific booking updates
+      const unsubscribeBookings = subscribe(`/user/${user.id}/queue/bookings`, (message) => {
+        console.log('📋 Booking update received:', message);
+        
+        if (message.type === 'BOOKING_STATUS_UPDATED') {
+          // Update booking status in real-time
+          setBookings(prevBookings => 
+            prevBookings.map(booking => 
+              booking.id === message.bookingId 
+                ? { ...booking, status: message.newStatus }
+                : booking
+            )
+          );
+
+          toast({
+            title: "Booking Updated",
+            description: `Your booking status has been updated to ${message.newStatus}`,
+            duration: 5000,
+          });
+        }
+
+        if (message.type === 'BOOKING_CONFIRMED') {
+          // Refresh bookings when new booking is confirmed
+          loadBookings();
+          toast({
+            title: "Booking Confirmed! 🎉",
+            description: "Your event booking has been confirmed successfully.",
+            duration: 5000,
+          });
+        }
+
+        setLastUpdateTime(new Date());
+      });
+
+      // Subscribe to payment updates
+      const unsubscribePayments = subscribe(`/user/${user.id}/queue/payments`, (message) => {
+        console.log('💳 Payment update received:', message);
+        
+        if (message.type === 'PAYMENT_SUCCESSFUL') {
+          toast({
+            title: "Payment Successful! ✅",
+            description: "Your payment has been processed successfully.",
+            duration: 5000,
+          });
+        }
+
+        setLastUpdateTime(new Date());
+      });
+
+      subscriptions.push(unsubscribeBookings, unsubscribePayments);
+    }
+
+    // For admin users - dashboard updates
+    if (user.role === 'admin') {
+      // Subscribe to admin dashboard updates
+      const unsubscribeAdmin = subscribe('/topic/admin/dashboard', (message) => {
+        console.log('👤 Admin dashboard update:', message);
+        
+        if (message.type === 'NEW_BOOKING') {
+          setRealTimeNotifications(prev => [
+            { id: Date.now(), type: 'booking', message: `New booking: ${message.eventTitle}`, time: new Date() },
+            ...prev.slice(0, 9) // Keep only 10 most recent
+          ]);
+
+          toast({
+            title: "New Booking! 📅",
+            description: `${message.userName} booked ${message.eventTitle}`,
+            duration: 4000,
+          });
+        }
+
+        if (message.type === 'USER_REGISTERED') {
+          setRealTimeNotifications(prev => [
+            { id: Date.now(), type: 'user', message: `New user registered: ${message.userName}`, time: new Date() },
+            ...prev.slice(0, 9)
+          ]);
+
+          toast({
+            title: "New User! 👤",
+            description: `${message.userName} just registered`,
+            duration: 4000,
+          });
+        }
+
+        setLastUpdateTime(new Date());
+      });
+
+      // Subscribe to system notifications
+      const unsubscribeSystem = subscribe('/topic/system', (message) => {
+        console.log('⚙️ System notification:', message);
+        
+        if (message.type === 'SYSTEM_ALERT') {
+          toast({
+            title: "System Alert",
+            description: message.message,
+            variant: "destructive",
+            duration: 6000,
+          });
+        }
+
+        setLastUpdateTime(new Date());
+      });
+
+      subscriptions.push(unsubscribeAdmin, unsubscribeSystem);
+    }
+
+    // Subscribe to general notifications for all users
+    const unsubscribeGeneral = subscribe('/topic/notifications', (message) => {
+      console.log('🔔 General notification:', message);
+      
+      toast({
+        title: message.title || "Notification",
+        description: message.message,
+        duration: 4000,
+      });
+
+      setLastUpdateTime(new Date());
+    });
+
+    subscriptions.push(unsubscribeGeneral);
+
+    // Send user activity to backend
+    sendMessage('/app/user/activity', {
+      userId: user.id,
+      action: 'DASHBOARD_VIEW',
+      page: isBookingsPage ? 'bookings' : 'dashboard',
+      timestamp: new Date().toISOString()
+    });
+
+    // Cleanup function
+    return () => {
+      console.log('🔌 Cleaning up Dashboard WebSocket subscriptions');
+      subscriptions.forEach(unsubscribe => unsubscribe());
+    };
+  }, [user, isConnected, subscribe, sendMessage, toast, isBookingsPage]);
+
+  // Load user bookings
+  const loadBookings = () => {
+    setLoading(true);
+    try {
+      if (user) {
+        const savedBookings = localStorage.getItem(`bookings_${user.id}`);
+        if (savedBookings) {
+          const parsedBookings = JSON.parse(savedBookings);
+          const validBookings = parsedBookings.filter((booking: any) =>
+            booking &&
+            booking.id &&
+            booking.eventTitle &&
+            booking.status
+          );
+          setBookings(validBookings);
         } else {
           setBookings([]);
         }
-      } catch (error) {
-        console.error('Error loading bookings:', error);
+      } else {
         setBookings([]);
-        toast({
-          title: "Error Loading Bookings",
-          description: "There was an error loading your bookings. Please try refreshing the page.",
-          variant: "destructive",
-        });
-      } finally {
-        setLoading(false);
       }
-    };
+    } catch (error) {
+      console.error('Error loading bookings:', error);
+      setBookings([]);
+      toast({
+        title: "Error Loading Bookings",
+        description: "There was an error loading your bookings. Please try refreshing the page.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
 
+  useEffect(() => {
     loadBookings();
   }, [user, toast]);
 
@@ -170,6 +324,16 @@ const Dashboard: React.FC = () => {
         if (user) {
           localStorage.setItem(`bookings_${user.id}`, JSON.stringify(updatedBookings));
         }
+
+        // Send cancellation to backend via WebSocket
+        if (isConnected) {
+          sendMessage('/app/bookings/cancel', {
+            bookingId,
+            userId: user?.id,
+            timestamp: new Date().toISOString()
+          });
+        }
+
         toast({
           title: "Booking Cancelled",
           description: "Your booking has been cancelled successfully.",
@@ -188,10 +352,30 @@ const Dashboard: React.FC = () => {
   // Universal Booking Actions handlers
   const handleRatingSubmit = (bookingId: string, rating: number, review: string) => {
     console.log('Rating submitted:', { bookingId, rating, review });
+    
+    // Send rating to backend via WebSocket
+    if (isConnected) {
+      sendMessage('/app/reviews/submit', {
+        bookingId,
+        rating,
+        review,
+        userId: user?.id,
+        timestamp: new Date().toISOString()
+      });
+    }
   };
 
   const handleDownloadComplete = (bookingId: string) => {
     console.log('Download completed for booking:', bookingId);
+    
+    // Track download activity via WebSocket
+    if (isConnected) {
+      sendMessage('/app/tickets/download', {
+        bookingId,
+        userId: user?.id,
+        timestamp: new Date().toISOString()
+      });
+    }
   };
 
   const showToastMessage = (title: string, description: string, variant?: 'default' | 'destructive') => {
@@ -225,8 +409,26 @@ const Dashboard: React.FC = () => {
 
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="mb-8">
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">My Bookings</h1>
-            <p className="text-gray-600 dark:text-gray-300">Manage your event bookings and download tickets</p>
+            <div className="flex items-center justify-between">
+              <div>
+                <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">My Bookings</h1>
+                <p className="text-gray-600 dark:text-gray-300">Manage your event bookings and download tickets</p>
+              </div>
+              {/* ADD REAL-TIME STATUS INDICATOR */}
+              <div className="flex items-center gap-2">
+                {isConnected && (
+                  <Badge variant="outline" className="flex items-center gap-1">
+                    <Wifi className="h-3 w-3 text-green-500" />
+                    Live Updates
+                  </Badge>
+                )}
+                {lastUpdateTime && (
+                  <Badge variant="secondary" className="text-xs">
+                    Updated {lastUpdateTime.toLocaleTimeString()}
+                  </Badge>
+                )}
+              </div>
+            </div>
           </div>
 
           {loading ? (
@@ -423,8 +625,47 @@ const Dashboard: React.FC = () => {
         {/* Fixed container with proper mobile padding */}
         <div className="flex-grow max-w-7xl mx-auto px-3 sm:px-4 lg:px-8 py-8">
           <div className="mb-8">
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Admin Dashboard</h1>
-            <p className="text-gray-600 dark:text-gray-300">Manage your events, users, and view analytics</p>
+            <div className="flex items-center justify-between">
+              <div>
+                <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Admin Dashboard</h1>
+                <p className="text-gray-600 dark:text-gray-300">Manage your events, users, and view analytics</p>
+              </div>
+              {/* ADD ADMIN REAL-TIME INDICATORS */}
+              <div className="flex items-center gap-2">
+                {isConnected && (
+                  <Badge variant="outline" className="flex items-center gap-1">
+                    <Wifi className="h-3 w-3 text-green-500" />
+                    Real-time Dashboard
+                  </Badge>
+                )}
+                {realTimeNotifications.length > 0 && (
+                  <Badge variant="default" className="flex items-center gap-1">
+                    <Bell className="h-3 w-3" />
+                    {realTimeNotifications.length} New
+                  </Badge>
+                )}
+              </div>
+            </div>
+
+            {/* ADD REAL-TIME NOTIFICATIONS PANEL */}
+            {realTimeNotifications.length > 0 && (
+              <Card className="mt-4">
+                <CardContent className="p-4">
+                  <h3 className="font-medium mb-2 flex items-center gap-1">
+                    <Bell className="h-4 w-4" />
+                    Recent Activity
+                  </h3>
+                  <div className="space-y-1 max-h-32 overflow-y-auto">
+                    {realTimeNotifications.slice(0, 5).map(notification => (
+                      <div key={notification.id} className="text-sm text-gray-600 dark:text-gray-300 flex items-center justify-between">
+                        <span>{notification.message}</span>
+                        <span className="text-xs">{notification.time.toLocaleTimeString()}</span>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
           </div>
           
           <Tabs defaultValue="overview" className="space-y-6">

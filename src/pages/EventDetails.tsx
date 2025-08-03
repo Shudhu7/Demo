@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react'; // ADD useEffect
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -6,18 +6,65 @@ import { Card, CardContent } from '@/components/ui/card';
 import Navbar from '@/components/Navbar';
 import { events } from '@/data/events';
 import { useAuth } from '@/contexts/AuthContext';
+import { useWebSocketContext } from '@/contexts/WebSocketContext'; // ADD THIS IMPORT
 import EnhancedFooter from '@/components/EnhancedFooter';
 
-import { Calendar, MapPin, Users, Clock, ArrowLeft, Ticket } from 'lucide-react';
+import { Calendar, MapPin, Users, Clock, ArrowLeft, Ticket, Wifi } from 'lucide-react';
 import { format } from 'date-fns';
 
 const EventDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
+  const { subscribe, sendMessage, isConnected } = useWebSocketContext(); // ADD THIS
+
   const [selectedTickets, setSelectedTickets] = useState(1);
+  const [realTimeSeats, setRealTimeSeats] = useState<number | null>(null); // ADD THIS
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(null); // ADD THIS
 
   const event = events.find(e => e.id === id);
+
+  // ADD WEBSOCKET FUNCTIONALITY
+  useEffect(() => {
+    if (id && isConnected) {
+      console.log('🔗 Subscribing to real-time updates for event:', id);
+
+      // Subscribe to seat availability updates for this specific event
+      const unsubscribeSeats = subscribe(`/topic/seats/${id}`, (message) => {
+        console.log('💺 Seat update received:', message);
+        if (message.availableSeats !== undefined) {
+          setRealTimeSeats(message.availableSeats);
+          setLastUpdate(new Date());
+        }
+      });
+
+      // Subscribe to general event updates
+      const unsubscribeEvent = subscribe(`/topic/events/${id}`, (message) => {
+        console.log('📅 Event update received:', message);
+        // Handle event updates (price changes, time changes, etc.)
+        if (message.type === 'EVENT_UPDATED') {
+          setLastUpdate(new Date());
+        }
+      });
+
+      // Send a message to backend that user is viewing this event
+      sendMessage('/app/events/view', {
+        eventId: id,
+        action: 'VIEW_EVENT',
+        timestamp: new Date().toISOString()
+      });
+
+      // Cleanup subscriptions when component unmounts or event changes
+      return () => {
+        console.log('🔌 Unsubscribing from event updates');
+        unsubscribeSeats();
+        unsubscribeEvent();
+      };
+    }
+  }, [id, isConnected, subscribe, sendMessage]);
+
+  // Use real-time seat data if available, otherwise use static data
+  const currentAvailableSeats = realTimeSeats !== null ? realTimeSeats : event?.availableSeats || 0;
 
   if (!event) {
     return (
@@ -47,6 +94,17 @@ const EventDetails: React.FC = () => {
       navigate('/login', { state: { returnTo: `/event/${event.id}` } });
       return;
     }
+
+    // Send booking intent to backend via WebSocket
+    if (isConnected) {
+      sendMessage('/app/bookings/intent', {
+        eventId: event.id,
+        requestedTickets: selectedTickets,
+        userId: 'current-user', // You can get this from auth context
+        timestamp: new Date().toISOString()
+      });
+    }
+
     navigate(`/booking/${event.id}`, { state: { tickets: selectedTickets } });
   };
 
@@ -77,7 +135,16 @@ const EventDetails: React.FC = () => {
 
             <div className="space-y-6">
               <div>
-                <Badge className="mb-2">{event.category}</Badge>
+                <div className="flex items-center gap-2 mb-2">
+                  <Badge className="">{event.category}</Badge>
+                  {/* ADD REAL-TIME STATUS INDICATOR */}
+                  {isConnected && (
+                    <Badge variant="outline" className="flex items-center gap-1">
+                      <Wifi className="h-3 w-3" />
+                      Live Updates
+                    </Badge>
+                  )}
+                </div>
                 <h1 className="text-4xl font-bold text-gray-900 mb-4">{event.title}</h1>
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
@@ -101,7 +168,15 @@ const EventDetails: React.FC = () => {
                     <Users className="w-5 h-5 mr-3" />
                     <div>
                       <p className="font-medium">Available Seats</p>
-                      <p className="text-sm">{event.availableSeats} of {event.totalSeats}</p>
+                      <p className="text-sm">
+                        {/* SHOW REAL-TIME SEAT COUNT */}
+                        <span className={realTimeSeats !== null ? 'font-bold text-primary' : ''}>
+                          {currentAvailableSeats}
+                        </span> of {event.totalSeats}
+                        {realTimeSeats !== null && (
+                          <span className="text-xs text-green-600 ml-1">● Live</span>
+                        )}
+                      </p>
                     </div>
                   </div>
                   
@@ -113,6 +188,14 @@ const EventDetails: React.FC = () => {
                     </div>
                   </div>
                 </div>
+
+                {/* ADD LAST UPDATE INDICATOR */}
+                {lastUpdate && (
+                  <div className="text-xs text-gray-500 flex items-center gap-1">
+                    <Wifi className="h-3 w-3" />
+                    Last updated: {lastUpdate.toLocaleTimeString()}
+                  </div>
+                )}
               </div>
 
               <div>
@@ -149,13 +232,22 @@ const EventDetails: React.FC = () => {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => setSelectedTickets(Math.min(event.availableSeats, selectedTickets + 1))}
-                        disabled={selectedTickets >= event.availableSeats}
+                        onClick={() => setSelectedTickets(Math.min(currentAvailableSeats, selectedTickets + 1))}
+                        disabled={selectedTickets >= currentAvailableSeats}
                       >
                         +
                       </Button>
                     </div>
                   </div>
+
+                  {/* ADD REAL-TIME SEAT AVAILABILITY WARNING */}
+                  {currentAvailableSeats <= 10 && currentAvailableSeats > 0 && (
+                    <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
+                      <p className="text-sm text-orange-800">
+                        ⚠️ Only {currentAvailableSeats} seats left! Book now to secure your spot.
+                      </p>
+                    </div>
+                  )}
 
                   <div className="border-t pt-4">
                     <div className="flex justify-between items-center mb-4">
@@ -167,9 +259,9 @@ const EventDetails: React.FC = () => {
                       size="lg" 
                       className="w-full"
                       onClick={handleBookNow}
-                      disabled={event.availableSeats === 0}
+                      disabled={currentAvailableSeats === 0}
                     >
-                      {event.availableSeats === 0 ? 'Sold Out' : 'Book Now'}
+                      {currentAvailableSeats === 0 ? 'Sold Out' : 'Book Now'}
                     </Button>
 
                     {!isAuthenticated && (
@@ -183,6 +275,10 @@ const EventDetails: React.FC = () => {
                     <p>• Instant booking confirmation</p>
                     <p>• Secure payment processing</p>
                     <p>• Mobile tickets available</p>
+                    {/* ADD REAL-TIME INDICATOR */}
+                    {isConnected && (
+                      <p className="text-green-600">• Real-time seat availability ●</p>
+                    )}
                   </div>
                 </div>
               </CardContent>

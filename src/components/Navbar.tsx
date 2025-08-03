@@ -1,10 +1,11 @@
-// src/components/Navbar.tsx - Fixed register icon button positioning
+// src/components/Navbar.tsx - With WebSocket status added
 import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Calendar, User, LogOut, Settings, Ticket, Heart, UserCircle } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useWishlist } from '@/contexts/WishlistContext';
+import { WebSocketStatus } from '@/components/WebSocketStatus';
 import ThemeToggle from '@/components/ThemeToggle';
 import MobileNavigation from '@/components/MobileNavigation';
 import {
@@ -98,6 +99,9 @@ const Navbar: React.FC = () => {
 
           {/* Right side content */}
           <div className="flex items-center space-x-4">
+            {/* WebSocket Status - ADD THIS */}
+            {isAuthenticated && <WebSocketStatus />}
+            
             {/* Theme Toggle */}
             <ThemeToggle />
 
